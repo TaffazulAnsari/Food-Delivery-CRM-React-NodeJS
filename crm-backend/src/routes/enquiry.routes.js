@@ -1,65 +1,130 @@
-const router = require('express').Router();
-const mongoose = require('mongoose');
-const Enquiry = require('../models/Enquiry');
-const authenticate = require('../middleware/auth.middleware');
 
-// Public form: intentionally does not use authentication middleware.
-router.post('/', async (req, res) => {
-  const { name, email, phone = '', courseInterest, message = '' } = req.body;
-  if (!name || !email || !courseInterest) {
-    return res.status(400).json({ message: 'name, email and courseInterest are required.' });
+const express = require("express");
+const mongoose = require("mongoose");
+
+const router = express.Router();
+
+const enquirySchema = new mongoose.Schema(
+  {
+    name: { type: String, required: true, trim: true },
+    email: { type: String, trim: true, lowercase: true },
+    phone: { type: String, trim: true },
+    subject: { type: String, trim: true },
+    message: { type: String, required: true, trim: true },
+    status: {
+      type: String,
+      enum: ["New", "Contacted", "Resolved"],
+      default: "New"
+    }
+  },
+  { timestamps: true }
+);
+
+const Enquiry =
+  mongoose.models.Enquiry ||
+  mongoose.model("Enquiry", enquirySchema);
+
+// Get all enquiries
+router.get("/", async (req, res) => {
+  try {
+    if (mongoose.connection.readyState !== 1) {
+      return res.status(503).json({ message: "Database not connected" });
+    }
+
+    const enquiries = await Enquiry.find().sort({ createdAt: -1 });
+    res.json(enquiries);
+  } catch (error) {
+    res.status(500).json({ message: "Could not fetch enquiries" });
   }
-  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(email))) {
-    return res.status(400).json({ message: 'Enter a valid email address.' });
+});
+
+// Create a new enquiry
+router.post("/", async (req, res) => {
+  try {
+    if (mongoose.connection.readyState !== 1) {
+      return res.status(503).json({ message: "Database not connected" });
+    }
+
+    const { name, email, phone, subject, message } = req.body;
+
+    if (!name || !message) {
+      return res.status(400).json({
+        message: "Name and message are required"
+      });
+    }
+
+    const enquiry = await Enquiry.create({
+      name,
+      email,
+      phone,
+      subject,
+      message
+    });
+
+    res.status(201).json({
+      message: "Enquiry created successfully",
+      enquiry
+    });
+  } catch (error) {
+    res.status(500).json({ message: "Could not create enquiry" });
   }
-  const enquiry = await Enquiry.create({
-    name: String(name).trim(),
-    email: String(email).trim().toLowerCase(),
-    phone: String(phone).trim(),
-    courseInterest: String(courseInterest).trim(),
-    message: String(message).trim()
-  });
-  res.status(201).json({ message: 'Enquiry submitted successfully.', enquiry });
 });
 
-router.use(authenticate);
+// Update enquiry status
+router.patch("/:id/status", async (req, res) => {
+  try {
+    if (mongoose.connection.readyState !== 1) {
+      return res.status(503).json({ message: "Database not connected" });
+    }
 
-router.get('/public', async (req, res) => {
-  const page = Math.max(parseInt(req.query.page, 10) || 1, 1);
-  const limit = Math.min(Math.max(parseInt(req.query.limit, 10) || 20, 1), 100);
-  const filter = { claimedBy: null };
-  const [enquiries, total] = await Promise.all([
-    Enquiry.find(filter).sort({ createdAt: -1 }).skip((page - 1) * limit).limit(limit),
-    Enquiry.countDocuments(filter)
-  ]);
-  res.json({ enquiries, pagination: { page, limit, total, pages: Math.ceil(total / limit) } });
+    if (!mongoose.isValidObjectId(req.params.id)) {
+      return res.status(400).json({ message: "Invalid enquiry ID" });
+    }
+
+    const allowedStatuses = ["New", "Contacted", "Resolved"];
+    const { status } = req.body;
+
+    if (!allowedStatuses.includes(status)) {
+      return res.status(400).json({ message: "Invalid status" });
+    }
+
+    const enquiry = await Enquiry.findByIdAndUpdate(
+      req.params.id,
+      { status },
+      { new: true, runValidators: true }
+    );
+
+    if (!enquiry) {
+      return res.status(404).json({ message: "Enquiry not found" });
+    }
+
+    res.json({ message: "Status updated", enquiry });
+  } catch (error) {
+    res.status(500).json({ message: "Could not update status" });
+  }
 });
 
-router.get('/my-leads', async (req, res) => {
-  const page = Math.max(parseInt(req.query.page, 10) || 1, 1);
-  const limit = Math.min(Math.max(parseInt(req.query.limit, 10) || 20, 1), 100);
-  const filter = { claimedBy: req.employee._id };
-  const [enquiries, total] = await Promise.all([
-    Enquiry.find(filter).sort({ claimedAt: -1 }).skip((page - 1) * limit).limit(limit),
-    Enquiry.countDocuments(filter)
-  ]);
-  res.json({ enquiries, pagination: { page, limit, total, pages: Math.ceil(total / limit) } });
-});
+// Delete an enquiry
+router.delete("/:id", async (req, res) => {
+  try {
+    if (mongoose.connection.readyState !== 1) {
+      return res.status(503).json({ message: "Database not connected" });
+    }
 
-router.patch('/:id/claim', async (req, res) => {
-  if (!mongoose.isValidObjectId(req.params.id)) return res.status(400).json({ message: 'Invalid enquiry ID.' });
+    if (!mongoose.isValidObjectId(req.params.id)) {
+      return res.status(400).json({ message: "Invalid enquiry ID" });
+    }
 
-  // Atomic conditional update: only one counselor can claim an unclaimed enquiry.
-  const enquiry = await Enquiry.findOneAndUpdate(
-    { _id: req.params.id, claimedBy: null },
-    { $set: { claimedBy: req.employee._id, claimedAt: new Date() } },
-    { new: true, runValidators: true }
-  );
-  if (enquiry) return res.json({ message: 'Enquiry claimed successfully.', enquiry });
+    const enquiry = await Enquiry.findByIdAndDelete(req.params.id);
 
-  const existing = await Enquiry.findById(req.params.id).select('_id claimedBy');
-  if (!existing) return res.status(404).json({ message: 'Enquiry not found.' });
-  return res.status(409).json({ message: 'This enquiry has already been claimed by another counselor.' });
+    if (!enquiry) {
+      return res.status(404).json({ message: "Enquiry not found" });
+    }
+
+    res.json({ message: "Enquiry deleted successfully" });
+  } catch (error) {
+    res.status(500).json({ message: "Could not delete enquiry" });
+  }
 });
 
 module.exports = router;
