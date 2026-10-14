@@ -1,0 +1,15 @@
+<<<<<<< HEAD
+
+node_modules/
+.env
+.env.local
+dist/
+build/
+=======
+
+node_modules/
+.env
+.env.local
+dist/
+build/
+>>>>>>> 0ea5d4614159ff0c1e7739900dbf9527c3870480
