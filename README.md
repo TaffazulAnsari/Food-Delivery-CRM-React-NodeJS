@@ -1,4 +1,5 @@
-<<<<<<< HEAD
+![Food Delivery CRM Screenshot](https://github.com/TaffazulAnsari/Food-Delivery-CRM-React-NodeJS/blob/main/Screenshot%202026-10-14%20224444.png?raw=true)
+
 # Developer Assignment Pack
 
 This repository contains two independent projects:
